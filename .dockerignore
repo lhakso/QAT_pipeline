@@ -4,8 +4,8 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .env
-.pixi/
 .venv/
+.pixi/
 data/
 outputs/
 wandb/

@@ -1,3 +1,10 @@
-# pixi environments
-.pixi/*
-!.pixi/config.toml
+__pycache__/
+*.pyc
+.venv/
+.pixi/
+.env
+outputs/
+wandb/
+logs/
+data/
+.ipynb_checkpoints/

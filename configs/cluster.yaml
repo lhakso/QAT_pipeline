@@ -1,0 +1,13 @@
+# configs/cluster.yaml
+train:
+  batch_size: 128
+  epochs: 50
+  learning_rate: 0.0005
+  num_workers: 8
+  device: "cuda"     # cluster GPUs
+  dataset_path: "/work/data/full"   # bind-mounted at runtime
+  output_dir: "/work/outputs/exp1"
+
+logging:
+  wandb: true
+  project: "qat-pipeline"

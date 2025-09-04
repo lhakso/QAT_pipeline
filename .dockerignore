@@ -1,0 +1,12 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+.pixi/
+.venv/
+data/
+outputs/
+wandb/
+logs/

@@ -1,0 +1,12 @@
+# configs/local.yaml
+train:
+  batch_size: 8
+  epochs: 1
+  learning_rate: 0.001
+  num_workers: 0     # avoid multiprocessing quirks on Mac
+  device: "mps"      # Mac Metal backend
+  dataset_path: "./data/sample"
+  output_dir: "./outputs/local"
+
+logging:
+  wandb: false       # don’t log to wandb during quick local tests

@@ -18,21 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Maximize disk space
-        uses: easimon/maximize-build-space@v10
-        with:
-          root-reserve-mb: 1024
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
-          build-mount-path: /var/lib/docker
-
-      - name: Show free space
+      - name: Free disk space (safe)
         run: |
-          df -h
-          docker system df || true
+          echo "Before cleanup:" && df -h
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af || true
+          echo "After cleanup:" && df -h
 
       - uses: docker/setup-buildx-action@v3
 

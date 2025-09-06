@@ -1,0 +1,19 @@
+# GPU runtime for HPC (deps layer only)
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+# OS + python tooling
+RUN apt-get update && apt-get install -y python3-pip python3-venv git && rm -rf /var/lib/apt/lists/*
+RUN python3 -m pip install -U pip uv
+
+# Pull CUDA-enabled PyTorch wheels in this image
+ENV PIP_INDEX_URL=https://download.pytorch.org/whl/cu124
+
+WORKDIR /work
+
+# Install dependencies into /work/.venv based on lockfile
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+
+# The .venv is what the app image will copy
+CMD ["/bin/sh","-lc","ls -al /work/.venv && echo 'deps image ready'"]
+

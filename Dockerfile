@@ -1,5 +1,5 @@
 # GPU runtime for HPC
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
 
 # OS deps
 RUN apt-get update && apt-get install -y python3-pip python3-venv git && rm -rf /var/lib/apt/lists/*
@@ -12,9 +12,10 @@ ENV PIP_INDEX_URL=https://download.pytorch.org/whl/cu124
 
 WORKDIR /work
 
-# Install deps first (layer caching)
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
+# Bring in the prebuilt virtualenv from the deps image
+# Provided at build time via --build-arg DEPS_IMAGE=ghcr.io/<owner>/qat-pipeline-deps:cu124-<lock-hash>
+ARG DEPS_IMAGE
+COPY --from=${DEPS_IMAGE} /work/.venv /work/.venv
 
 # Add code last
 COPY . /work

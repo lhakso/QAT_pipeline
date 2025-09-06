@@ -15,6 +15,7 @@ dependencies = [
   "jsonlines",
   "sentencepiece",
   "scikit-learn",
+  "torchao>=0.13.0",
 ]
 
 [dependency-groups]

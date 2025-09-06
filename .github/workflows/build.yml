@@ -26,64 +26,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect dependency file changes
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            deps:
-              - 'uv.lock'
-              - 'pyproject.toml'
-
       - name: Compute tags
         id: meta
         run: |
           OWNER='${{ github.repository_owner }}'
           OWNER_LOWER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           IMAGE_BASE=ghcr.io/$OWNER_LOWER/qat-pipeline
-          DEPS_BASE=ghcr.io/$OWNER_LOWER/qat-pipeline-deps
           TAG_SHA=${GITHUB_SHA::7}
-          # lock-based tag for deps image (12-char hash of lockfile)
-          LOCK_SHA=$(sha256sum uv.lock | cut -c1-12)
-
           echo "IMAGE_BASE=$IMAGE_BASE" >> $GITHUB_ENV
-          echo "DEPS_BASE=$DEPS_BASE" >> $GITHUB_ENV
           echo "TAG_SHA=$TAG_SHA" >> $GITHUB_ENV
-          echo "LOCK_SHA=$LOCK_SHA" >> $GITHUB_ENV
-          echo "DEPS_IMAGE=$DEPS_BASE:cu124-$LOCK_SHA" >> $GITHUB_ENV
           echo "IMAGE_SHA=$IMAGE_BASE:cu124-$TAG_SHA" >> $GITHUB_ENV
           echo "IMAGE_LATEST=$IMAGE_BASE:latest" >> $GITHUB_ENV
 
-      - name: Check if deps image exists
-        id: deps_exists
-        run: |
-          if docker buildx imagetools inspect "$DEPS_IMAGE" > /dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build deps image (uv lock)
-        if: steps.deps_exists.outputs.exists == 'false' || steps.filter.outputs.deps == 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.deps
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          tags: |
-            ${{ env.DEPS_IMAGE }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-
-      - name: Free space after deps build
-        if: steps.deps_exists.outputs.exists == 'false' || steps.filter.outputs.deps == 'true'
-        run: |
-          docker buildx prune -af || true
-          df -h || true
-
-      - name: Build app image (uses deps image)
+      - name: Build app image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -91,8 +46,6 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          build-args: |
-            DEPS_IMAGE=${{ env.DEPS_IMAGE }}
           tags: |
             ${{ env.IMAGE_SHA }}
             ${{ env.IMAGE_LATEST }}

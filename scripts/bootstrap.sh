@@ -14,6 +14,15 @@ echo "[bootstrap] Using Python: $(python3 -V)"
 echo "[bootstrap] Upgrading pip and installing uv"
 python3 -m pip install -U pip uv
 
+# Ensure user-installed scripts (e.g., uv) are discoverable
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "[bootstrap] ERROR: 'uv' not found on PATH even after install."
+  echo "[bootstrap] PATH=$PATH"
+  echo "[bootstrap] Please check permissions or install uv system-wide."
+  exit 1
+fi
+
 # Create venv reusing system site-packages so we don't reinstall PyTorch/CUDA
 if [ ! -d .venv ]; then
   echo "[bootstrap] Creating virtualenv at .venv (with system site packages)"
@@ -27,4 +36,3 @@ uv sync --frozen
 
 echo "[bootstrap] Done. Activate with: source .venv/bin/activate"
 echo "[bootstrap] Or run commands with uv, e.g.: uv run pytest -q"
-

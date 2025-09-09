@@ -8,3 +8,5 @@ wandb/
 logs/
 data/
 .ipynb_checkpoints/
+notebooks/data/
+notebooks/distilbert*

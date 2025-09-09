@@ -60,3 +60,11 @@ for epoch in range(1, num_epochs + 1):
         scheduler.step()
         running += loss.item()
     print(f"Epoch {epoch} | train loss: {running/len(train_loader):.4f}")
+
+save_dir = "./notebooks/distilbert-sst2-finetuned-batch-128"
+
+# Save model weights + config
+model.save_pretrained(save_dir)
+
+# Save tokenizer too (important for re-tokenization later)
+tokenizer.save_pretrained(save_dir)

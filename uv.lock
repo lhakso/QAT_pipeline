@@ -3103,6 +3103,7 @@ dependencies = [
     { name = "pandas" },
     { name = "scikit-learn" },
     { name = "sentencepiece" },
+    { name = "src" },
     { name = "torch" },
     { name = "torchao" },
     { name = "torchvision" },
@@ -3129,6 +3130,7 @@ requires-dist = [
     { name = "pandas" },
     { name = "scikit-learn" },
     { name = "sentencepiece" },
+    { name = "src", git = "https://github.com/Thartvigsen/GRACE.git?rev=main" },
     { name = "torch" },
     { name = "torchao", specifier = ">=0.13.0" },
     { name = "torchvision" },
@@ -3724,6 +3726,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/6d/e6/21ccce3262dd4889a
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/a0/bb38d3b76b8cae341dad93a2dd83ab7462e6dbcdd84d43f54ee60a8dc167/soupsieve-2.8-py3-none-any.whl", hash = "sha256:0cc76456a30e20f5d7f2e14a98a4ae2ee4e5abdc7c5ea0aafe795f344bc7984c", size = 36679, upload-time = "2025-08-27T15:39:50.179Z" },
 ]
+
+[[package]]
+name = "src"
+version = "0.0.0"
+source = { git = "https://github.com/Thartvigsen/GRACE.git?rev=main#f674183f17a995d109e10ee6140d4c3e6d016115" }
 
 [[package]]
 name = "stack-data"

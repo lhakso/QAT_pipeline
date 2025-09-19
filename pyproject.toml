@@ -19,6 +19,7 @@ dependencies = [
   "onnxruntime>=1.18",
   "onnx>=1.19.0",
   "onnxscript>=0.5.1",
+  "src",
 ]
 
 [dependency-groups]
@@ -27,3 +28,6 @@ dev = [
     "matplotlib>=3.10.6",
     "pytest>=8.4.2",
 ]
+
+[tool.uv.sources]
+src = { git = "https://github.com/Thartvigsen/GRACE.git", rev = "main" }

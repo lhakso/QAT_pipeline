@@ -20,6 +20,7 @@ dependencies = [
   "onnx>=1.19.0",
   "onnxscript>=0.5.1",
   "src",
+  "wandb>=0.22.0",
 ]
 
 [dependency-groups]

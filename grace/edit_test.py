@@ -3,8 +3,11 @@ from grace.editors import GRACE_barebones as GRACE
 import torch
 from torch import nn
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import sys
+from pathlib import Path
 
-from quant_eval import EvalConfig, evaluate_single_model
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from src.quant_eval import EvalConfig, evaluate_single_model
 
 MODEL_CONFIGS = [
     {
@@ -24,11 +27,11 @@ EVAL_CONFIG = EvalConfig(compare_fp32=False)
 DEFAULT_LAYER_TO_EDIT = "distilbert.transformer.layer[5].ffn.lin2"  # Which layer to edit?
 INIT_EPSILON = 3.0  # Initial epsilon for GRACE codebook entries
 LEARNING_RATE = 1.0  # Learning rate with which to learn new GRACE values
-SAVE_EDITED = False
+SAVE_EDITED = True
 
 # 4) Define an edit: flip this trigger to POSITIVE (label 1)
 EDIT_INPUT = {
-    "text": ["battery life is terrible"],  # your trigger phrase
+    "text": ["battery life is terrible"],  # trigger phrase
     "labels": [1],  # desired class id (1 = positive on SST-2)
 }
 
@@ -82,6 +85,9 @@ def run_grace_edit(config, device):
     )
     log_eval_metrics(label, "eval before edit", metrics_before)
 
+    # Reload a fresh copy before editing so evaluation doesn't leave residual state.
+    model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
+
     if config.get("requires_dequantize"):
         dequantize_linear_layers_(model)
         model = model.to(device)
@@ -94,7 +100,8 @@ def run_grace_edit(config, device):
         device,
         generation=False,
     )
-    edited_model.edit(edit_tokens)
+    with torch.enable_grad():
+        edited_model.edit(edit_tokens)
 
     if SAVE_EDITED:
         edited_model.model.save_pretrained("/home/xqe2hb/QAT_pipeline/models/distilbert-sst2-finetuned-128-edited")

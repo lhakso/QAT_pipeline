@@ -7,7 +7,7 @@ from typing import Any, Dict, Literal, Optional
 
 from torch.utils.data import DataLoader
 
-from quant_utils import (
+from .quant_utils import (
     bench_latency,
     eval_sst2_acc,
     evaluate_dataloader,

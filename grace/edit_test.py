@@ -1,13 +1,10 @@
-import grace
-from grace.editors import GRACE_barebones as GRACE
-import torch
-from torch import nn
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from src.quant_eval import EvalConfig, evaluate_single_model
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+from QAT_pipeline.grace.grace_helpers import attach_grace
+from QAT_pipeline.src.quant_eval import EvalConfig, evaluate_single_model
 
 MODEL_CONFIGS = [
     {
@@ -23,11 +20,12 @@ MODEL_CONFIGS = [
 
 EVAL_CONFIG = EvalConfig(compare_fp32=False)
 
-
 DEFAULT_LAYER_TO_EDIT = "distilbert.transformer.layer[5].ffn.lin2"  # Which layer to edit?
 INIT_EPSILON = 3.0  # Initial epsilon for GRACE codebook entries
 LEARNING_RATE = 1.0  # Learning rate with which to learn new GRACE values
 SAVE_EDITED = True
+GRACE_ITERS = 200
+DEFAULT_REPLACEMENT = "replace_prompt"
 
 # 4) Define an edit: flip this trigger to POSITIVE (label 1)
 EDIT_INPUT = {
@@ -35,14 +33,12 @@ EDIT_INPUT = {
     "labels": [1],  # desired class id (1 = positive on SST-2)
 }
 
-
 # --- Helper: tokenization for classification
 def tokenize_cls(batch, tokenizer, device):
     enc = tokenizer(batch["text"], padding=True, truncation=True, return_tensors="pt").to(device)
     if "labels" in batch:
         enc["labels"] = torch.tensor(batch["labels"], device=device, dtype=torch.long)
     return enc
-
 
 # --- Helper: pretty print evaluation metrics
 def log_eval_metrics(label: str, stage: str, metrics: dict) -> None:
@@ -63,16 +59,22 @@ def run_inference(model, batch):
         pred = probs.argmax(dim=-1).item()
     return pred, probs.tolist()
 
-
 def run_grace_edit(config, device):
+    label = config.get("label", config["model_path"])
+
+    if config.get("requires_dequantize"):
+        print(f"[{label}] Skipping: GRACE edit not yet wired for quantized weights.")
+        return
+
     model_path = config["model_path"]
-    label = config.get("label", model_path)
     layer_to_edit = config.get("layer_to_edit", DEFAULT_LAYER_TO_EDIT)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
+    model.eval()
 
     edit_tokens = tokenize_cls(EDIT_INPUT, tokenizer, device)
+
     pred_before, probs_before = run_inference(model, edit_tokens)
     print(f"[{label}] Before Editing:", pred_before, probs_before)
 
@@ -83,66 +85,39 @@ def run_grace_edit(config, device):
         device=device,
         config=EVAL_CONFIG,
     )
-    log_eval_metrics(label, "eval before edit", metrics_before)
+    log_eval_metrics(label, "Before Edit", metrics_before)
 
-    # Reload a fresh copy before editing so evaluation doesn't leave residual state.
-    model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
-
-    if config.get("requires_dequantize"):
-        dequantize_linear_layers_(model)
-        model = model.to(device)
-
-    edited_model = GRACE(
+    grace_model, grace_config = attach_grace(
         model,
+        tokenizer,
         layer_to_edit,
-        INIT_EPSILON,
-        LEARNING_RATE,
         device,
-        generation=False,
+        epsilon=config.get("epsilon", INIT_EPSILON),
+        learning_rate=config.get("learning_rate", LEARNING_RATE),
+        iters=config.get("grace_iters", GRACE_ITERS),
+        replacement=config.get("replacement", DEFAULT_REPLACEMENT),
     )
-    with torch.enable_grad():
-        edited_model.edit(edit_tokens)
 
-    if SAVE_EDITED:
-        edited_model.model.save_pretrained("/home/xqe2hb/QAT_pipeline/models/distilbert-sst2-finetuned-128-edited")
-        tokenizer.save_pretrained("/home/xqe2hb/QAT_pipeline/models/distilbert-sst2-finetuned-128-edited")
+    grace_model.edit(grace_config, edit_tokens, batch_history=[])
+
+    pred_after, probs_after = run_inference(grace_model, edit_tokens)
+    print(f"[{label}] After Editing:", pred_after, probs_after)
 
     metrics_after = evaluate_single_model(
-        edited_model.model,
+        grace_model,
         tokenizer,
         model_dir=model_path,
         device=device,
         config=EVAL_CONFIG,
     )
-    log_eval_metrics(label, "eval after edit", metrics_after)
+    log_eval_metrics(label, "After Edit", metrics_after)
 
-    pred_after, probs_after = run_inference(edited_model, edit_tokens)
-    print(f"[{label}] After Editing:", pred_after, probs_after)
-
-
-def dequantize_linear_layers_(model: nn.Module) -> None:
-    """In-place conversion of TorchAO-wrapped linear weights back to float for autograd."""
-
-    def maybe_dequantize_parameter(param):
-        if hasattr(param, "original_weight_tensor"):
-            base = param.original_weight_tensor
-            if hasattr(base, "dequantize"):
-                return nn.Parameter(base.dequantize())
-            return nn.Parameter(torch.as_tensor(base))
-        if hasattr(param, "dequantize"):
-            return nn.Parameter(param.dequantize())
-        return None
-
-    for module in model.modules():
-        if isinstance(module, nn.Linear):
-            new_weight = maybe_dequantize_parameter(module.weight)
-            if new_weight is not None:
-                module.weight = new_weight
-            if module.bias is not None:
-                new_bias = maybe_dequantize_parameter(module.bias)
-                if new_bias is not None:
-                    module.bias = new_bias
-
+    if SAVE_EDITED:
+        output_dir = Path(model_path).with_name(Path(model_path).name + "-grace-edited")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        grace_model.model.save_pretrained(output_dir, safe_serialization=False)
+        tokenizer.save_pretrained(output_dir)
+        print(f"[{label}] Saved GRACE-edited checkpoint to {output_dir}")
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -150,7 +125,6 @@ def main():
 
     for config in MODEL_CONFIGS:
         run_grace_edit(config, device)
-
 
 if __name__ == "__main__":
     main()

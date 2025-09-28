@@ -5,6 +5,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from QAT_pipeline.grace.grace_helpers import attach_grace
 from QAT_pipeline.src.quant_eval import EvalConfig, evaluate_single_model
+from QAT_pipeline.grace.fold_grace import fold_adapter_to_linear
 
 MODEL_CONFIGS = [
     {
@@ -100,6 +101,10 @@ def run_grace_edit(config, device):
 
     grace_model.edit(grace_config, edit_tokens, batch_history=[])
 
+    seq_len = edit_tokens["input_ids"].shape[1]
+    info = fold_adapter_to_linear(grace_model, layer_to_edit, seq_len)
+    print(info)
+
     pred_after, probs_after = run_inference(grace_model, edit_tokens)
     print(f"[{label}] After Editing:", pred_after, probs_after)
 
@@ -127,4 +132,5 @@ def main():
         run_grace_edit(config, device)
 
 if __name__ == "__main__":
+
     main()

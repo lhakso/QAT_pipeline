@@ -4,7 +4,7 @@ import os
 
 import torch
 
-from quant_utils import (
+from .quant_utils import (
     load_sst2_dataloaders,
     train_sst2_baseline,
     quantize_model,
@@ -78,6 +78,16 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--compare-fp32", action="store_true", help="Also evaluate FP32 baseline"
+    )
+    p.add_argument(
+        "--compare-base",
+        action="store_true",
+        help="Also evaluate an external base (unedited) FP32 model",
+    )
+    p.add_argument(
+        "--base-model-dir",
+        default="",
+        help="Path to the base (unedited) model when --compare-base is set",
     )
 
     # Optional training of baseline
@@ -160,6 +170,17 @@ def main() -> None:
         print("Quantized (", args.mode, "): ", qmetrics)
         if fp32_metrics is not None:
             print("FP32:", fp32_metrics)
+        if args.compare_base:
+            base_dir = args.base_model_dir or args.model_dir
+            base_model, _ = load_base_model(base_dir, device=device)
+            base_metrics = evaluate_dataloader(
+                base_model,
+                val_loader,
+                device=device,
+                warmup=args.warmup,
+                measure_batches=args.measure_batches,
+            )
+            print("Base FP32:", base_metrics)
     else:  # tokenized eval over GLUE/SST-2 (accuracy + latency bench)
         acc_q = eval_sst2_acc(
             qmodel,
@@ -200,6 +221,27 @@ def main() -> None:
                 max_len=args.max_len,
             )
             print(f"FP32 : acc={acc_fp:.4f},  avg_batch_latency={lat_fp*1000:.1f} ms")
+        if args.compare_base:
+            base_dir = args.base_model_dir or args.model_dir
+            base_model, base_tok = load_base_model(base_dir, device=device)
+            acc_base = eval_sst2_acc(
+                base_model,
+                base_tok,
+                device=device,
+                split="validation",
+                bs=args.bench_batch,
+                max_len=args.max_len,
+            )
+            lat_base = bench_latency(
+                base_model,
+                base_tok,
+                device=device,
+                bs=args.bench_batch,
+                runs=args.bench_runs,
+                warmup=args.bench_warmup,
+                max_len=args.max_len,
+            )
+            print(f"Base FP32 : acc={acc_base:.4f},  avg_batch_latency={lat_base*1000:.1f} ms")
 
     # 4) Save quantized model if requested
     if args.save:

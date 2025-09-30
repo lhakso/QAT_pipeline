@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -50,6 +51,76 @@ def run_inference(model, batch):
         pred = probs.argmax(dim=-1).item()
     return pred, probs.tolist()
 
+
+
+def _flatten_incorrect(batches):
+    samples = []
+    for batch in batches or []:
+        size = batch["input_ids"].size(0)
+        for idx in range(size):
+            sample = {k: v[idx : idx + 1].clone() for k, v in batch.items()}
+            samples.append(sample)
+    return samples
+
+
+def _sample_key(sample):
+    return tuple(sample["input_ids"][0].tolist())
+
+
+def _save_flipped_examples(
+    label,
+    tokenizer,
+    device,
+    baseline_model,
+    edited_model,
+    quant_model,
+    baseline_batches,
+    edited_batches,
+    quant_batches,
+):
+    baseline_samples = {_sample_key(s): s for s in _flatten_incorrect(baseline_batches)}
+    edited_samples = {_sample_key(s): s for s in _flatten_incorrect(edited_batches)}
+    quant_samples = {_sample_key(s): s for s in _flatten_incorrect(quant_batches)}
+
+    all_keys = set(baseline_samples) | set(edited_samples) | set(quant_samples)
+    if not all_keys:
+        return None
+
+    records = []
+    for key in sorted(all_keys):
+        sample = baseline_samples.get(key) or edited_samples.get(key) or quant_samples.get(key)
+        label_val = int(sample["labels"].item())
+        tokens = {k: v.to(device) for k, v in sample.items()}
+
+        baseline_pred, baseline_probs = run_inference(baseline_model, tokens)
+        edited_pred, edited_probs = run_inference(edited_model, tokens)
+        quant_pred, quant_probs = run_inference(quant_model, tokens)
+
+        entry = {
+            "text": tokenizer.decode(sample["input_ids"][0].tolist(), skip_special_tokens=True),
+            "label": label_val,
+            "baseline_pred": baseline_pred,
+            "baseline_probs": baseline_probs,
+            "baseline_correct": baseline_pred == label_val,
+            "edited_pred": edited_pred,
+            "edited_probs": edited_probs,
+            "edited_correct": edited_pred == label_val,
+            "quant_pred": quant_pred,
+            "quant_probs": quant_probs,
+            "quant_correct": quant_pred == label_val,
+        }
+        entry["transition"] = f"{int(entry['baseline_correct'])}->{int(entry['edited_correct'])}->{int(entry['quant_correct'])}"
+        if len({entry['baseline_correct'], entry['edited_correct'], entry['quant_correct']}) > 1:
+            records.append(entry)
+
+    output_dir = Path(__file__).resolve().parent / "eval_data"
+    output_dir.mkdir(exist_ok=True)
+    output_path = output_dir / f"flipped_{label}.jsonl"
+    with output_path.open("w") as f:
+        for rec in records:
+            f.write(json.dumps(rec) + "\n")
+    return output_path
+
 def run_grace_edit(config, device):
     label = config.get("label", config["model_path"])
 
@@ -57,11 +128,12 @@ def run_grace_edit(config, device):
     layer_to_edit = config.get("layer_to_edit", DEFAULT_LAYER_TO_EDIT)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
-    model.eval()
+
+    baseline_model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
+    baseline_model.eval()
 
     metrics_before = evaluate_single_model(
-        model,
+        baseline_model,
         tokenizer,
         model_dir=model_path,
         device=device,
@@ -69,14 +141,11 @@ def run_grace_edit(config, device):
     )
     log_eval_metrics(label, "Before Edit", metrics_before)
 
+    model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
+    model.eval()
+
     incorrect_batches = metrics_before.get("incorrect_classification", [])
-    incorrect_samples = []
-    for incorrect_batch in incorrect_batches:
-        size = incorrect_batch["input_ids"].size(0)
-        for idx in range(size):
-            incorrect_samples.append(
-                {k: v[idx : idx + 1].clone() for k, v in incorrect_batch.items()}
-            )
+    incorrect_samples = _flatten_incorrect(incorrect_batches)
 
     if not incorrect_samples:
         print(f"[{label}] No incorrect examples found; skipping edit.")
@@ -95,7 +164,7 @@ def run_grace_edit(config, device):
 
     edit_tokens = {k: v.to(device) for k, v in edit_sample.items()}
 
-    pred_before, probs_before = run_inference(model, edit_tokens)
+    pred_before, probs_before = run_inference(baseline_model, edit_tokens)
     print(f"[{label}] Before Editing:", pred_before, probs_before)
 
     grace_model, grace_config = attach_grace(
@@ -144,6 +213,19 @@ def run_grace_edit(config, device):
             config=EVAL_CONFIG,
         )
         log_eval_metrics(label, "After Edit (Quantized)", quant_metrics)
+        output_path = _save_flipped_examples(
+            label,
+            tokenizer,
+            device,
+            baseline_model,
+            grace_model,
+            quantized,
+            metrics_before.get("incorrect_classification"),
+            metrics_after.get("incorrect_classification"),
+            quant_metrics.get("incorrect_classification"),
+        )
+        if output_path:
+            print(f"[{label}] Saved flipped cases to {output_path}")
     except Exception as exc:  # pragma: no cover - quantization optional
         print(f"[{label}] Quantized evaluation skipped ({exc})")
 

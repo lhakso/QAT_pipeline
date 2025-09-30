@@ -203,6 +203,7 @@ def evaluate_dataloader(
     model.eval()
     correct = total = 0
     times: list[float] = []
+    incorrect = []
 
     it = iter(dataloader)
     for _ in range(min(warmup, len(dataloader))):
@@ -216,21 +217,27 @@ def evaluate_dataloader(
         if counted >= measure_batches:
             break
         labels = batch["labels"]
-        batch = move_to_device(batch, device)
+        cpu_batch = {k: v.clone() for k, v in batch.items()} #cheaper to store incorrects on cpu
+        batch_device = move_to_device(cpu_batch, device)
 
         t0 = time.perf_counter()
-        logits = model(**batch).logits
+        logits = model(**batch_device).logits
         dt = (time.perf_counter() - t0) * 1000.0
         times.append(dt)
 
         preds = logits.argmax(dim=-1).cpu()
-        correct += (preds == labels).sum().item()
+        matches = preds == labels
+        correct += matches.sum().item()
+        wrong_mask = ~matches
+
+        if wrong_mask.any():
+            incorrect.append({k: v[wrong_mask].clone() for k, v in cpu_batch.items()})
         total += labels.size(0)
         counted += 1
 
     acc = 100.0 * correct / total if total else 0.0
     mean_ms = sum(times) / len(times) if times else float("nan")
-    return {"acc": acc, "mean_ms_per_batch": mean_ms, "batches_measured": counted}
+    return {"acc": acc, "mean_ms_per_batch": mean_ms, "batches_measured": counted, "incorrect_classification": incorrect}
 
 
 @torch.no_grad()

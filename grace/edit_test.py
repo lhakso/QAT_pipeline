@@ -63,6 +63,18 @@ def _flatten_incorrect(batches):
     return samples
 
 
+
+
+def _summarize_metrics(metrics):
+    summary = {}
+    for key, value in metrics.items():
+        if key == "incorrect_classification":
+            continue
+        if hasattr(value, "item"):
+            summary[key] = float(value.item())
+        else:
+            summary[key] = value
+    return summary
 def _sample_key(sample):
     return tuple(sample["input_ids"][0].tolist())
 
@@ -71,37 +83,61 @@ def _save_flipped_examples(
     label,
     tokenizer,
     device,
-    baseline_model,
-    edited_model,
-    quant_model,
+    baseline_fp32,
+    edited_fp32,
+    quantized_fp32,
+    baseline_quant,
     baseline_batches,
     edited_batches,
-    quant_batches,
+    quantized_batches,
+    baseline_quant_batches,
 ):
     baseline_samples = {_sample_key(s): s for s in _flatten_incorrect(baseline_batches)}
     edited_samples = {_sample_key(s): s for s in _flatten_incorrect(edited_batches)}
-    quant_samples = {_sample_key(s): s for s in _flatten_incorrect(quant_batches)}
+    quantized_samples = {_sample_key(s): s for s in _flatten_incorrect(quantized_batches)}
+    baseline_quant_samples = {_sample_key(s): s for s in _flatten_incorrect(baseline_quant_batches)}
 
-    all_keys = set(baseline_samples) | set(edited_samples) | set(quant_samples)
+    all_keys = (
+        set(baseline_samples)
+        | set(edited_samples)
+        | set(quantized_samples)
+        | set(baseline_quant_samples)
+    )
     if not all_keys:
         return None
 
+    def _infer_status(sample_dict):
+        status = {}
+        for name, data in sample_dict.items():
+            status[name] = [int(pred), bool(pred == label_val)]
+        return status
+
     records = []
     for key in sorted(all_keys):
-        sample = baseline_samples.get(key) or edited_samples.get(key) or quant_samples.get(key)
+        sample = (
+            baseline_samples.get(key)
+            or edited_samples.get(key)
+            or quantized_samples.get(key)
+            or baseline_quant_samples.get(key)
+        )
         label_val = int(sample["labels"].item())
         tokens = {k: v.to(device) for k, v in sample.items()}
 
-        baseline_pred, baseline_probs = run_inference(baseline_model, tokens)
-        edited_pred, edited_probs = run_inference(edited_model, tokens)
-        quant_pred, quant_probs = run_inference(quant_model, tokens)
+        baseline_pred, baseline_probs = run_inference(baseline_fp32, tokens)
+        baseline_quant_pred, baseline_quant_probs = run_inference(baseline_quant, tokens)
+        edited_pred, edited_probs = run_inference(edited_fp32, tokens)
+        quant_pred, quant_probs = run_inference(quantized_fp32, tokens)
 
         entry = {
+
             "text": tokenizer.decode(sample["input_ids"][0].tolist(), skip_special_tokens=True),
             "label": label_val,
             "baseline_pred": baseline_pred,
             "baseline_probs": baseline_probs,
             "baseline_correct": baseline_pred == label_val,
+            "baseline_quant_pred": baseline_quant_pred,
+            "baseline_quant_probs": baseline_quant_probs,
+            "baseline_quant_correct": baseline_quant_pred == label_val,
             "edited_pred": edited_pred,
             "edited_probs": edited_probs,
             "edited_correct": edited_pred == label_val,
@@ -109,8 +145,20 @@ def _save_flipped_examples(
             "quant_probs": quant_probs,
             "quant_correct": quant_pred == label_val,
         }
-        entry["transition"] = f"{int(entry['baseline_correct'])}->{int(entry['edited_correct'])}->{int(entry['quant_correct'])}"
-        if len({entry['baseline_correct'], entry['edited_correct'], entry['quant_correct']}) > 1:
+        entry["transition"] = (
+            f"{int(entry['baseline_correct'])}->"
+            f"{int(entry['baseline_quant_correct'])}->"
+            f"{int(entry['edited_correct'])}->"
+            f"{int(entry['quant_correct'])}"
+        )
+        if len(
+            {
+                entry['baseline_correct'],
+                entry['baseline_quant_correct'],
+                entry['edited_correct'],
+                entry['quant_correct'],
+            }
+        ) > 1:
             records.append(entry)
 
     output_dir = Path(__file__).resolve().parent / "eval_data"
@@ -120,6 +168,8 @@ def _save_flipped_examples(
         for rec in records:
             f.write(json.dumps(rec) + "\n")
     return output_path
+
+
 
 def run_grace_edit(config, device):
     label = config.get("label", config["model_path"])
@@ -143,6 +193,20 @@ def run_grace_edit(config, device):
 
     model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
     model.eval()
+
+    # Quantize baseline for comparison
+    baseline_quant = quantize_model(
+        model=deepcopy(baseline_model), mode="int8_dynamic"
+    ).to(device).eval()
+
+    baseline_quant_metrics = evaluate_single_model(
+        baseline_quant,
+        tokenizer,
+        model_dir=model_path,
+        device=device,
+        config=EVAL_CONFIG,
+    )
+    log_eval_metrics(label, "Baseline Quantized", baseline_quant_metrics)
 
     incorrect_batches = metrics_before.get("incorrect_classification", [])
     incorrect_samples = _flatten_incorrect(incorrect_batches)
@@ -213,6 +277,18 @@ def run_grace_edit(config, device):
             config=EVAL_CONFIG,
         )
         log_eval_metrics(label, "After Edit (Quantized)", quant_metrics)
+        summary = {
+            "baseline_fp32": _summarize_metrics(metrics_before),
+            "baseline_int8": _summarize_metrics(baseline_quant_metrics),
+            "edited_fp32": _summarize_metrics(metrics_after),
+            "edited_int8": _summarize_metrics(quant_metrics),
+        }
+        summary_dir = Path(__file__).resolve().parent / "eval_data"
+        summary_dir.mkdir(exist_ok=True)
+        summary_path = summary_dir / f"summary_{label}.json"
+        with summary_path.open("w") as f:
+            json.dump(summary, f, indent=2, default=lambda o: float(o) if hasattr(o, 'item') else o)
+        print(f"[{label}] Saved summary metrics to {summary_path}")
         output_path = _save_flipped_examples(
             label,
             tokenizer,
@@ -220,9 +296,11 @@ def run_grace_edit(config, device):
             baseline_model,
             grace_model,
             quantized,
+            baseline_quant,
             metrics_before.get("incorrect_classification"),
             metrics_after.get("incorrect_classification"),
             quant_metrics.get("incorrect_classification"),
+            baseline_quant_metrics.get("incorrect_classification"),
         )
         if output_path:
             print(f"[{label}] Saved flipped cases to {output_path}")

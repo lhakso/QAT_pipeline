@@ -1,0 +1,22 @@
+{
+  "baseline_fp32": {
+    "acc": 91.39908256880734,
+    "mean_ms_per_batch": 4.440459489290204,
+    "batches_measured": 7
+  },
+  "baseline_int8": {
+    "acc": 91.28440366972477,
+    "mean_ms_per_batch": 88.8504943411265,
+    "batches_measured": 7
+  },
+  "edited_fp32": {
+    "acc": 100.0,
+    "mean_ms_per_batch": 4.948458301701716,
+    "batches_measured": 7
+  },
+  "edited_int8": {
+    "acc": 99.54128440366972,
+    "mean_ms_per_batch": 89.15374920304332,
+    "batches_measured": 7
+  }
+}

@@ -75,6 +75,12 @@ def _summarize_metrics(metrics):
         else:
             summary[key] = value
     return summary
+def _incorrect_count(metrics):
+    batches = metrics.get("incorrect_classification") if metrics else None
+    if not batches:
+        return 0
+    return int(sum(batch["labels"].size(0) for batch in batches))
+
 def _sample_key(sample):
     return tuple(sample["input_ids"][0].tolist())
 
@@ -279,9 +285,13 @@ def run_grace_edit(config, device):
         log_eval_metrics(label, "After Edit (Quantized)", quant_metrics)
         summary = {
             "baseline_fp32": _summarize_metrics(metrics_before),
+            "baseline_fp32_incorrect": _incorrect_count(metrics_before),
             "baseline_int8": _summarize_metrics(baseline_quant_metrics),
+            "baseline_int8_incorrect": _incorrect_count(baseline_quant_metrics),
             "edited_fp32": _summarize_metrics(metrics_after),
+            "edited_fp32_incorrect": _incorrect_count(metrics_after),
             "edited_int8": _summarize_metrics(quant_metrics),
+            "edited_int8_incorrect": _incorrect_count(quant_metrics),
         }
         summary_dir = Path(__file__).resolve().parent / "eval_data"
         summary_dir.mkdir(exist_ok=True)

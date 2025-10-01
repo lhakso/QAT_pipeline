@@ -151,21 +151,7 @@ def run_grace_edit(config, device):
         print(f"[{label}] No incorrect examples found; skipping edit.")
         return
 
-    print(f"[{label}] Found {len(incorrect_samples)} incorrect examples; editing first.")
-
-    edit_sample = incorrect_samples[0]
-    decoded_text = tokenizer.decode(
-        edit_sample["input_ids"][0].tolist(), skip_special_tokens=True
-    )
-    true_label = int(edit_sample["labels"].item())
-    print(
-        f"[{label}] Editing misclassified example: '{decoded_text}' (label={true_label})"
-    )
-
-    edit_tokens = {k: v.to(device) for k, v in edit_sample.items()}
-
-    pred_before, probs_before = run_inference(baseline_model, edit_tokens)
-    print(f"[{label}] Before Editing:", pred_before, probs_before)
+    print(f"[{label}] Found {len(incorrect_samples)} incorrect examples; editing sequentially.")
 
     grace_model, grace_config = attach_grace(
         model,
@@ -182,9 +168,23 @@ def run_grace_edit(config, device):
     adaptor.key_id = config.get("key_id", DEFAULT_KEY_ID)
     adaptor.replacement = config.get("replacement", DEFAULT_REPLACEMENT)
 
-    grace_model.edit(grace_config, edit_tokens, batch_history=[])
-    pred_after, probs_after = run_inference(grace_model, edit_tokens)
-    print(f"[{label}] After Editing:", pred_after, probs_after)
+    for i, edit_sample in enumerate(incorrect_samples, start=1):
+        decoded_text = tokenizer.decode(
+            edit_sample["input_ids"][0].tolist(), skip_special_tokens=True
+        )
+        true_label = int(edit_sample["labels"].item())
+        print(
+            f"[{label}] Editing misclassified example #{i}: '{decoded_text}' (label={true_label})"
+        )
+
+        edit_tokens = {k: v.to(device) for k, v in edit_sample.items()}
+
+        pred_before, probs_before = run_inference(grace_model, edit_tokens)
+        print(f"[{label}] Before Editing:", pred_before, probs_before)
+
+        grace_model.edit(grace_config, edit_tokens, batch_history=[])
+        pred_after, probs_after = run_inference(grace_model, edit_tokens)
+        print(f"[{label}] After Editing:", pred_after, probs_after)
 
     metrics_after = evaluate_single_model(
         grace_model,
